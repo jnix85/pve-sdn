@@ -4,8 +4,7 @@
 # Usage: apply-unifi-bgp.sh <gateway-ip> [--dry-run]
 #
 # Run this from your workstation (not the Proxmox host).
-# Requires: ssh access to the UniFi gateway as root or ubnt.
-set -x 
+# Requires: ssh access to the UniFi gateway as unifinetwork (sudo to root).
 
 set -euo pipefail
 
@@ -26,8 +25,10 @@ DRY_RUN=false
 [[ -n "$GW_IP" ]] || die "Usage: $0 <gateway-ip> [--dry-run]"
 [[ -f "$BGP_CONF" ]] || die "BGP config not found: $BGP_CONF"
 
-SSH="ssh unifinetwork@${GW_IP}"
+SSH_USER="${SSH_USER:-unifinetwork}"
+SSH="ssh ${SSH_USER}@${GW_IP}"
 SCP="scp"
+SUDO="sudo"
 
 $DRY_RUN && echo -e "${YELLOW}[DRY-RUN]${NC} No changes will be made."
 
@@ -36,21 +37,24 @@ echo "  Applying BGP config to UniFi gateway: ${GW_IP}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── Step 1: Copy config to gateway ────────────────────────────────────────────
+# scp to home dir first, then sudo mv to /etc/frr (can't scp directly as non-root)
 step "Copying proxmox-bgp.conf → ${GW_IP}:${REMOTE_PATH}"
 if ! $DRY_RUN; then
-    $SCP "$BGP_CONF" "root@${GW_IP}:${REMOTE_PATH}"
+    $SCP "$BGP_CONF" "${SSH_USER}@${GW_IP}:/tmp/bgp-proxmox.conf"
+    $SSH "$SUDO mv /tmp/bgp-proxmox.conf ${REMOTE_PATH} && $SUDO chmod 644 ${REMOTE_PATH}"
     ok "Config copied."
 else
-    echo "  [dry-run] scp $BGP_CONF root@${GW_IP}:${REMOTE_PATH}"
+    echo "  [dry-run] scp $BGP_CONF ${SSH_USER}@${GW_IP}:/tmp/bgp-proxmox.conf"
+    echo "  [dry-run] ssh ${SSH_USER}@${GW_IP} 'sudo mv /tmp/bgp-proxmox.conf ${REMOTE_PATH}'"
 fi
 
 # ── Step 2: Apply via vtysh ────────────────────────────────────────────────────
 step "Applying config via vtysh"
 if ! $DRY_RUN; then
-    $SSH "vtysh -f ${REMOTE_PATH} && vtysh -c 'write memory'"
+    $SSH "$SUDO vtysh -f ${REMOTE_PATH} && $SUDO vtysh -c 'write memory'"
     ok "Config applied and saved."
 else
-    echo "  [dry-run] ssh root@${GW_IP} 'vtysh -f ${REMOTE_PATH} && vtysh -c write memory'"
+    echo "  [dry-run] ssh ${SSH_USER}@${GW_IP} 'sudo vtysh -f ${REMOTE_PATH} && sudo vtysh -c write memory'"
 fi
 
 # ── Step 3: Install persistence hook ──────────────────────────────────────────
@@ -62,20 +66,17 @@ HOOK_SCRIPT="#!/bin/sh
 vtysh -f ${REMOTE_PATH} && vtysh -c 'write memory'
 "
 if ! $DRY_RUN; then
-    $SSH "cat > ${HOOK_PATH} << 'EOF'
-${HOOK_SCRIPT}
-EOF
-chmod +x ${HOOK_PATH}"
+    $SSH "echo '${HOOK_SCRIPT}' | $SUDO tee ${HOOK_PATH} > /dev/null && $SUDO chmod +x ${HOOK_PATH}"
     ok "Persistence hook installed."
 else
-    echo "  [dry-run] Would install hook at root@${GW_IP}:${HOOK_PATH}"
+    echo "  [dry-run] Would install hook at ${SSH_USER}@${GW_IP}:${HOOK_PATH}"
 fi
 
 # ── Step 4: Verify ────────────────────────────────────────────────────────────
 step "Verifying BGP session"
 if ! $DRY_RUN; then
     echo ""
-    $SSH "vtysh -c 'show bgp summary'" || true
+    $SSH "$SUDO vtysh -c 'show bgp summary'" || true
 else
     echo "  [dry-run] ssh root@${GW_IP} 'vtysh -c show bgp summary'"
 fi
