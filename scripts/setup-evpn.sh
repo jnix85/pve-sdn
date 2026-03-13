@@ -93,7 +93,7 @@ else
         ok "BGP controller '${BGP_CTRL_ID}' already exists."
     else
         run pvesh create /cluster/sdn/controllers \
-            --id "$BGP_CTRL_ID" \
+            --controller "$BGP_CTRL_ID" \
             --type bgp \
             --asn "$PROXMOX_ASN" \
             --peers "$ROUTER_IP" \
@@ -113,7 +113,7 @@ else
         ok "EVPN controller '${EVPN_CTRL_ID}' already exists."
     else
         run pvesh create /cluster/sdn/controllers \
-            --id "$EVPN_CTRL_ID" \
+            --controller "$EVPN_CTRL_ID" \
             --type evpn \
             --asn "$PROXMOX_ASN" \
             --peers "$ROUTER_IP"

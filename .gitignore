@@ -13,3 +13,5 @@ coverage/
 
 # Agent specific
 .agents/memory/
+.agents 
+.github
