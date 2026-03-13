@@ -77,8 +77,8 @@ ROUTER_IP=10.24.0.1 PROXMOX_ASN=65002 sudo -E ./scripts/setup-evpn.sh
 |---|---|---|
 | `ROUTER_IP` | `10.24.0.1` | UniFi Gateway IP |
 | `PROXMOX_ASN` | `65002` | Proxmox BGP ASN |
-| `ZONE_ID` | `evpn_int` | SDN Zone name |
-| `VNET_ID` | `vnet_int` | VNet name |
+| `ZONE_ID` | `evpnint` | SDN Zone name |
+| `VNET_ID` | `vnetint` | VNet name |
 | `VNET_TAG` | `1000` | VXLAN VNI |
 | `VRF_VXLAN` | `10000` | VRF VXLAN tag |
 

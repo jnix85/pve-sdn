@@ -14,8 +14,8 @@ set -euo pipefail
 VLAN_ZONE="midgard"
 VLAN_VNETS=("legacy" "mgmt" "iot" "secure" "proxmox" "dmz" "deploy" "secalt" "misc")
 
-EVPN_ZONE="${ZONE_ID:-evpn_int}"
-EVPN_VNET="${VNET_ID:-vnet_int}"
+EVPN_ZONE="${ZONE_ID:-evpnint}"
+EVPN_VNET="${VNET_ID:-vnetint}"
 BGP_CTRL="${BGP_CTRL_ID:-unifi-peer}"
 EVPN_CTRL="${EVPN_CTRL_ID:-evpn-ctrl}"
 

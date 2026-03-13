@@ -17,13 +17,13 @@ Four Bash scripts manage the full lifecycle of Proxmox VE Software Defined Netwo
 - **VLAN Zone (`midgard`)**: Bridges Proxmox VNets to physical VLANs on `vmbr0`. Nine VNets map to UniFi VLAN tags.
 - **BGP Controller (`unifi-peer`)**: eBGP session between Proxmox (AS 65002) and UniFi Gateway (AS 65001).
 - **EVPN Controller (`evpn-ctrl`)**: Manages MAC/IP learning across the EVPN fabric.
-- **EVPN Zone (`evpn_int`)**: VRF instance with VXLAN tag 10000. Advertises subnets into BGP.
-- **VNet (`vnet_int`)**: Virtual bridge attached to VMs for EVPN-routed traffic (VNI 1000).
+- **EVPN Zone (`evpnint`)**: VRF instance with VXLAN tag 10000. Advertises subnets into BGP.
+- **VNet (`vnetint`)**: Virtual bridge attached to VMs for EVPN-routed traffic (VNI 1000).
 
 ## Data Flow
 
 ```
-VM (vnet_int) ──► EVPN Zone (evpn_int) ──► FRR / BGP ──► UniFi Gateway
+VM (vnetint) ──► EVPN Zone (evpnint) ──► FRR / BGP ──► UniFi Gateway
                                                 │
                                          Route advertisement
                                          of internal subnets
