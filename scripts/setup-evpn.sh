@@ -58,11 +58,18 @@ run() {
 command -v pvesh >/dev/null 2>&1 || die "pvesh not found — run this on a Proxmox VE host."
 [[ "$EUID" -eq 0 ]]              || die "This script must be run as root."
 
+# BGP controllers are node-scoped; detect the local node name from the cluster
+PVE_NODE="${PVE_NODE:-$(pvesh get /cluster/status --output-format json 2>/dev/null \
+    | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)}"
+# Fallback to hostname if cluster API doesn't return a node name
+PVE_NODE="${PVE_NODE:-$(hostname -s)}"
+
 $DRY_RUN && warn "Dry-run mode — no changes will be made."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Proxmox BGP/EVPN Setup"
 echo "  Proxmox ASN : ${PROXMOX_ASN}"
 echo "  Router Peer : ${ROUTER_IP}"
+echo "  Node        : ${PVE_NODE}"
 echo "  Zone        : ${ZONE_ID}  |  VNet: ${VNET_ID}  |  VNI: ${VNET_TAG}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -97,7 +104,8 @@ else
             --type bgp \
             --asn "$PROXMOX_ASN" \
             --peers "$ROUTER_IP" \
-            --ebgp 1
+            --ebgp 1 \
+            --node "$PVE_NODE"
         ok "BGP controller '${BGP_CTRL_ID}' created."
     fi
     mark_done "$STEP_ID"
