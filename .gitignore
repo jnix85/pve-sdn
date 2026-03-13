@@ -1,0 +1,15 @@
+# General
+.DS_Store
+*.log
+node_modules/
+__pycache__/
+.env
+.venv/
+dist/
+build/
+coverage/
+.vscode/
+.idea/
+
+# Agent specific
+.agents/memory/
