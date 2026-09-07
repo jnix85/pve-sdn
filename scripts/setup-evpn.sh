@@ -58,11 +58,15 @@ run() {
 command -v pvesh >/dev/null 2>&1 || die "pvesh not found — run this on a Proxmox VE host."
 [[ "$EUID" -eq 0 ]]              || die "This script must be run as root."
 
-# BGP controllers are node-scoped; detect the local node name from the cluster
-PVE_NODE="${PVE_NODE:-$(pvesh get /cluster/status --output-format json 2>/dev/null \
-    | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)}"
-# Fallback to hostname if cluster API doesn't return a node name
+# BGP controllers are node-scoped; detect the local node name.
+# Use hostname first (Proxmox node name == hostname), validate against cluster.
 PVE_NODE="${PVE_NODE:-$(hostname -s)}"
+# If hostname doesn't match a known cluster node, fall back to cluster API local node
+if ! pvesh get /nodes/"$PVE_NODE"/status --output-format json &>/dev/null; then
+    _api_node=$(pvesh get /cluster/status --output-format json 2>/dev/null \
+        | python3 -c "import sys,json; nodes=[n for n in json.load(sys.stdin) if n.get('local')]; print(nodes[0]['name'] if nodes else '')" 2>/dev/null)
+    PVE_NODE="${_api_node:-$PVE_NODE}"
+fi
 
 $DRY_RUN && warn "Dry-run mode — no changes will be made."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -96,7 +100,23 @@ step "BGP Controller: ${BGP_CTRL_ID}"
 if step_done "$STEP_ID"; then
     ok "Already completed — skipping."
 else
-    if pvesh get "/cluster/sdn/controllers/${BGP_CTRL_ID}" >/dev/null 2>&1; then
+    # Check if target controller exists, or if any BGP controller already exists
+    # on this node pointing to the same peer (avoid duplicates)
+    _existing_bgp=$(pvesh get /cluster/sdn/controllers --output-format json 2>/dev/null \
+        | python3 -c "
+import sys, json
+ctrls = json.load(sys.stdin)
+match = [c['controller'] for c in ctrls
+         if c.get('type') == 'bgp'
+         and c.get('node') == '${PVE_NODE}'
+         and '${ROUTER_IP}' in c.get('peers','')]
+print(match[0] if match else '')
+" 2>/dev/null)
+
+    if [[ -n "$_existing_bgp" ]]; then
+        ok "BGP controller '${_existing_bgp}' already exists on node ${PVE_NODE}."
+        BGP_CTRL_ID="$_existing_bgp"
+    elif pvesh get "/cluster/sdn/controllers/${BGP_CTRL_ID}" >/dev/null 2>&1; then
         ok "BGP controller '${BGP_CTRL_ID}' already exists."
     else
         run pvesh create /cluster/sdn/controllers \
@@ -104,7 +124,6 @@ else
             --type bgp \
             --asn "$PROXMOX_ASN" \
             --peers "$ROUTER_IP" \
-            --ebgp 1 \
             --node "$PVE_NODE"
         ok "BGP controller '${BGP_CTRL_ID}' created."
     fi
@@ -180,8 +199,48 @@ else
     mark_done "$STEP_ID"
 fi
 
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+# ── Step 7: Patch FRR for eBGP to peer ───────────────────────────────────────
+# Proxmox SDN generates FRR config with remote-as = local ASN (iBGP).
+# If the router peer uses a different ASN (eBGP), patch FRR after SDN reload.
+PEER_ASN="${PEER_ASN:-65001}"  # Peer (UniFi) ASN — override if different
+STEP_ID="frr_ebgp_patch"
+step "FRR eBGP patch: ${ROUTER_IP} → AS ${PEER_ASN}"
+if step_done "$STEP_ID"; then
+    ok "Already completed — skipping."
+else
+    # Read current FRR remote-as for this peer (from running config)
+    _cur_as=$(vtysh -c "show bgp neighbor ${ROUTER_IP}" 2>/dev/null \
+        | grep "remote AS" | awk '{print $NF}' || echo "")
+    if [[ "$_cur_as" == "$PEER_ASN" ]]; then
+        ok "FRR already configured with remote-as ${PEER_ASN} for ${ROUTER_IP}."
+    elif ! $DRY_RUN; then
+        # Remove peer from both peer-groups, configure as standalone eBGP neighbor
+        vtysh <<VTYSH_EOF
+configure terminal
+router bgp ${PROXMOX_ASN}
+no neighbor ${ROUTER_IP} peer-group BGP
+no neighbor ${ROUTER_IP} peer-group VTEP
+neighbor ${ROUTER_IP} remote-as ${PEER_ASN}
+address-family ipv4 unicast
+ neighbor ${ROUTER_IP} activate
+ neighbor ${ROUTER_IP} soft-reconfiguration inbound
+exit-address-family
+address-family l2vpn evpn
+ neighbor ${ROUTER_IP} activate
+exit-address-family
+exit
+VTYSH_EOF
+        # Save config (must be outside configure terminal)
+        vtysh -c "write memory"
+        ok "FRR patched: ${ROUTER_IP} configured as eBGP (remote-as ${PEER_ASN})."
+        warn "Note: This patch will need re-applying if 'pvesh set /cluster/sdn' is run again."
+    else
+        echo "  [dry-run] Would patch FRR: neighbor ${ROUTER_IP} remote-as ${PEER_ASN}"
+    fi
+    mark_done "$STEP_ID"
+fi
+
+
 echo "  BGP/EVPN setup complete."
 echo "  Proxmox ASN ${PROXMOX_ASN} → Peer ${ROUTER_IP}"
 echo ""

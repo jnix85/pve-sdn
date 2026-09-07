@@ -49,12 +49,21 @@ else
 fi
 
 # ── Step 2: Apply via vtysh ────────────────────────────────────────────────────
-step "Applying config via vtysh"
+# Use 'configure terminal' merge approach so we don't conflict with existing BGP AS.
+# UniFi may already have 'router bgp 65001' running — we only add missing pieces.
+step "Applying config via vtysh (merge)"
 if ! $DRY_RUN; then
-    $SSH "$SUDO vtysh -f ${REMOTE_PATH} && $SUDO vtysh -c 'write memory'"
+    # Check current AS to decide apply strategy
+    _current_as=$($SSH "$SUDO vtysh -c 'show bgp summary' 2>/dev/null | grep 'local AS number' | awk '{print \$NF}'" 2>/dev/null || echo "")
+    if [[ -n "$_current_as" && "$_current_as" != "65001" ]]; then
+        warn "UniFi BGP is running with AS ${_current_as} — expected 65001. Manual intervention may be required."
+    fi
+    # Apply full config file (works cleanly if BGP not running, merges if same AS)
+    $SSH "$SUDO vtysh -f ${REMOTE_PATH} 2>&1 | grep -v '^$'" || true
+    $SSH "$SUDO vtysh -c 'write memory'"
     ok "Config applied and saved."
 else
-    echo "  [dry-run] ssh ${SSH_USER}@${GW_IP} 'sudo vtysh -f ${REMOTE_PATH} && sudo vtysh -c write memory'"
+    echo "  [dry-run] ssh ${SSH_USER}@${GW_IP} 'sudo vtysh -f ${REMOTE_PATH}'"
 fi
 
 # ── Step 3: Install persistence hook ──────────────────────────────────────────

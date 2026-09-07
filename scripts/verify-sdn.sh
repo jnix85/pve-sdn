@@ -14,7 +14,7 @@ VLAN_VNETS=("legacy" "mgmt" "iot" "secure" "proxmox" "dmz" "deploy" "secalt" "mi
 
 EVPN_ZONE="${ZONE_ID:-evpnint}"
 EVPN_VNET="${VNET_ID:-vnetint}"
-BGP_CTRL="${BGP_CTRL_ID:-unifi-peer}"
+BGP_CTRL="${BGP_CTRL_ID:-}"      # optional override; auto-detected if empty
 EVPN_CTRL="${EVPN_CTRL_ID:-evpn-ctrl}"
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
@@ -74,10 +74,20 @@ fi
 # ── EVPN checks ───────────────────────────────────────────────────────────────
 if $CHECK_EVPN; then
     section "EVPN Controllers"
-    if exists "/cluster/sdn/controllers/${BGP_CTRL}"; then
+    # Auto-detect BGP controller on this node if not specified
+    if [[ -z "${BGP_CTRL}" ]]; then
+        BGP_CTRL=$(pvesh get /cluster/sdn/controllers --output-format json 2>/dev/null \
+            | python3 -c "
+import sys,json
+ctrls=json.load(sys.stdin)
+match=[c['controller'] for c in ctrls if c.get('type')=='bgp' and c.get('node','')!='']
+print(match[0] if match else '')
+" 2>/dev/null || echo "")
+    fi
+    if [[ -n "$BGP_CTRL" ]] && exists "/cluster/sdn/controllers/${BGP_CTRL}"; then
         ok "BGP controller '${BGP_CTRL}' exists."
     else
-        fail "BGP controller '${BGP_CTRL}' NOT found. Run: setup-evpn.sh"
+        fail "No BGP controller found. Run: setup-evpn.sh"
     fi
 
     if exists "/cluster/sdn/controllers/${EVPN_CTRL}"; then
@@ -102,13 +112,14 @@ if $CHECK_EVPN; then
     section "FRR / BGP Status"
     if command -v vtysh >/dev/null 2>&1; then
         BGP_SUMMARY=$(vtysh -c "show bgp summary" 2>/dev/null || true)
-        if echo "$BGP_SUMMARY" | grep -q "Established"; then
+        # BGP is established when any neighbor line shows an uptime (e.g. 00:01:35) not "never" or state name
+        if echo "$BGP_SUMMARY" | grep -qE '[0-9]+:[0-9]+:[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+'; then
             ok "BGP session is Established."
         else
             warn "BGP session not yet Established (peer may need to be configured)."
-            echo ""
-            echo "$BGP_SUMMARY" | head -20 | sed 's/^/    /'
         fi
+        echo ""
+        echo "$BGP_SUMMARY" | head -25 | sed 's/^/    /'
 
         EVPN_STATUS=$(vtysh -c "show evpn vni" 2>/dev/null || true)
         if [[ -n "$EVPN_STATUS" ]]; then
